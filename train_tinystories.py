@@ -151,19 +151,30 @@ class Trainer:
         self.logger.set_status("completed")
     
     def train_step(self, batch):
+        print("1. Loading batch to device...")
         prefix = batch["prefix"].to(self.device)
         target = batch["target"].to(self.device)
         prefix_mask = batch.get("prefix_mask")
         if prefix_mask is not None:
             prefix_mask = prefix_mask.to(self.device)
-        
+    
+        print("2. Warmup LR...")
+        if self.global_step < self.config["warmup_steps"]:
+            lr_scale = (self.global_step + 1) / self.config["warmup_steps"]
+            for pg in self.optimizer.param_groups:
+                pg["lr"] = pg["initial_lr"] * lr_scale
+    
+        print("3. Zero grad...")
         self.optimizer.zero_grad()
-        
+    
+        print("4. Forward pass...")
         if self.scaler:
             with autocast(dtype=torch.bfloat16):
                 outputs = self.model(prefix, target, prefix_mask=prefix_mask)
                 loss = outputs["loss"]
+            print("5. Backward...")
             self.scaler.scale(loss).backward()
+            print("6. Optimizer step...")
             self.scaler.unscale_(self.optimizer)
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config["grad_clip"])
             self.scaler.step(self.optimizer)
@@ -174,7 +185,8 @@ class Trainer:
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config["grad_clip"])
             self.optimizer.step()
-        
+    
+        print("7. Done!")
         return {k: v.item() if torch.is_tensor(v) else v for k, v in outputs.items()}
     
     @torch.no_grad()

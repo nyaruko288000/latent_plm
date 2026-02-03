@@ -26,7 +26,7 @@ class TrainingMetrics:
     val_loss: List[float] = field(default_factory=list)
     val_acc: List[float] = field(default_factory=list)
     lr: List[float] = field(default_factory=list)
-    loss_planner: List[float] = field(default_factory=list)
+    loss_wm: List[float] = field(default_factory=list)
     loss_decoder: List[float] = field(default_factory=list)
     timestamps: List[str] = field(default_factory=list)
     
@@ -60,7 +60,7 @@ class MetricsLogger:
         val_loss: Optional[float] = None,
         val_acc: Optional[float] = None,
         lr: Optional[float] = None,
-        loss_planner: Optional[float] = None,
+        loss_wm: Optional[float] = None,
         loss_decoder: Optional[float] = None,
         epoch: Optional[int] = None,
         total_epochs: Optional[int] = None,
@@ -77,8 +77,8 @@ class MetricsLogger:
                 self.metrics.train_acc.append(train_acc)
             if lr is not None:
                 self.metrics.lr.append(lr)
-            if loss_planner is not None:
-                self.metrics.loss_planner.append(loss_planner)
+            if loss_wm is not None:
+                self.metrics.loss_wm.append(loss_wm)
             if loss_decoder is not None:
                 self.metrics.loss_decoder.append(loss_decoder)
         
@@ -346,7 +346,7 @@ DASHBOARD_HTML = """
             data: {
                 labels: [],
                 datasets: [
-                    { label: 'Planner', data: [], borderColor: '#ff9f43', fill: false },
+                    { label: 'World Model', data: [], borderColor: '#ff9f43', fill: false },
                     { label: 'Decoder', data: [], borderColor: '#00d2d3', fill: false }
                 ]
             },
@@ -416,9 +416,9 @@ DASHBOARD_HTML = """
                 accChart.update('none');
                 
                 // Components chart
-                if (data.loss_planner && data.loss_planner.length > 0) {
+                if (data.loss_wm && data.loss_wm.length > 0) {
                     componentsChart.data.labels = sampledSteps;
-                    componentsChart.data.datasets[0].data = indices.map(i => data.loss_planner[i]);
+                    componentsChart.data.datasets[0].data = indices.map(i => data.loss_wm[i]);
                     componentsChart.data.datasets[1].data = indices.map(i => data.loss_decoder[i]);
                     componentsChart.update('none');
                 }
