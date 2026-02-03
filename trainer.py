@@ -198,16 +198,13 @@ def train_autoencoder(
     save_dir: str = "checkpoints",
     resume_epoch: int = 0,
 ) -> nn.Module:
-    """
-    阶段1：预训练 Autoencoder
-    支持从指定 epoch 恢复
-    """
     from pathlib import Path
+    from torch.optim.lr_scheduler import CosineAnnealingLR  # ← 加这行
+    
     Path(save_dir).mkdir(exist_ok=True)
     
     autoencoder = autoencoder.to(device)
     
-    # 加载 checkpoint
     if resume_epoch > 0:
         ckpt_path = f"{save_dir}/autoencoder_epoch{resume_epoch}.pt"
         autoencoder.load_state_dict(torch.load(ckpt_path, map_location=device))
@@ -216,6 +213,12 @@ def train_autoencoder(
     autoencoder.train()
     
     optimizer = AdamW(autoencoder.parameters(), lr=lr)
+    scheduler = CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=lr * 0.1)  # ← 加这行
+    
+    # 如果是恢复训练，快进 scheduler
+    for _ in range(resume_epoch):  # ← 加这段
+        scheduler.step()
+    
     scaler = GradScaler() if use_amp and device == 'cuda' else None
     
     for epoch in range(resume_epoch, num_epochs):
@@ -245,11 +248,13 @@ def train_autoencoder(
             total_loss += loss.item()
             total_acc += outputs['accuracy'].item()
         
+        scheduler.step()  # ← 加在 epoch 循环末尾
+        
         avg_loss = total_loss / len(dataloader)
         avg_acc = total_acc / len(dataloader)
-        print(f"AE Epoch {epoch+1}/{num_epochs} | Loss: {avg_loss:.4f} | Acc: {avg_acc:.4f}")
+        current_lr = scheduler.get_last_lr()[0]  # ← 可选：显示当前 lr
+        print(f"AE Epoch {epoch+1}/{num_epochs} | Loss: {avg_loss:.4f} | Acc: {avg_acc:.4f} | LR: {current_lr:.2e}")
         
-        # 保存
         torch.save(
             autoencoder.state_dict(),
             f"{save_dir}/autoencoder_epoch{epoch+1}.pt"
