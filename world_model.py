@@ -1,23 +1,18 @@
 """
 World Model = Encoder + Planner (合并)
-
-Prefix-LM 风格:
-- Prefix tokens: 双向注意力
-- Latent sequence: 因果注意力 + 可看所有 prefix
 """
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional, Tuple, List, Dict
+from functools import partial
 from torch.utils.checkpoint import checkpoint
 
 from components import RMSNorm, RotaryEmbedding, SwiGLU, apply_rotary_pos_emb
 
 
 class WorldModelBlock(nn.Module):
-    """World Model 的 Transformer Block"""
-    
     def __init__(
         self,
         hidden_dim: int,
@@ -90,12 +85,18 @@ class WorldModelBlock(nn.Module):
         return h, present_kv
 
 
+def _block_forward(layer, x, attn_mask):
+    """checkpoint 辅助函数"""
+    out, _ = layer(x, attn_mask=attn_mask)
+    return out
+
+
 class WorldModel(nn.Module):
     """
     World Model = Encoder + Planner (Prefix-LM)
     
-    - Prefix 部分：双向注意力，理解上下文
-    - Latent 部分：因果注意力 + 看 prefix，规划潜向量
+    - Prefix 部分：双向注意力
+    - Latent 部分：因果注意力 + 可看 prefix
     """
     
     def __init__(
@@ -172,15 +173,15 @@ class WorldModel(nn.Module):
         dtype: torch.dtype,
     ) -> torch.Tensor:
         """
-        Prefix-LM mask:
-        - prefix: 双向 (互相可见)
-        - latent: 因果 + 可看所有 prefix
+        Prefix-LM mask: [1, 1, total, total]
+        - prefix: 双向
+        - latent: 因果 + 可看 prefix
         """
         total = prefix_len + latent_len
-        mask = torch.zeros(total, total, device=device, dtype=dtype)
+        mask = torch.zeros(1, 1, total, total, device=device, dtype=dtype)
         
         # prefix 不能看 latent
-        mask[:prefix_len, prefix_len:] = torch.finfo(dtype).min
+        mask[:, :, :prefix_len, prefix_len:] = torch.finfo(dtype).min
         
         # latent 内部因果
         if latent_len > 1:
@@ -188,9 +189,29 @@ class WorldModel(nn.Module):
                 torch.full((latent_len, latent_len), torch.finfo(dtype).min, device=device, dtype=dtype),
                 diagonal=1
             )
-            mask[prefix_len:, prefix_len:] = latent_causal
+            mask[:, :, prefix_len:, prefix_len:] = latent_causal
         
         return mask
+    
+    def _apply_prefix_padding_mask(
+        self,
+        attn_mask: torch.Tensor,
+        prefix_mask: torch.Tensor,
+        prefix_len: int,
+        batch_size: int,
+    ) -> torch.Tensor:
+        """将 prefix padding mask 应用到 attn_mask"""
+        # prefix_mask: [B, N], 1=valid, 0=padding
+        # attn_mask: [1, 1, total, total]
+        
+        pad_mask = (1.0 - prefix_mask.float()) * torch.finfo(attn_mask.dtype).min  # [B, N]
+        pad_mask = pad_mask.view(batch_size, 1, 1, prefix_len)  # [B, 1, 1, N]
+        
+        # 扩展 attn_mask 并加上 padding
+        attn_mask = attn_mask.expand(batch_size, -1, -1, -1).clone()  # [B, 1, total, total]
+        attn_mask[:, :, :, :prefix_len] = attn_mask[:, :, :, :prefix_len] + pad_mask
+        
+        return attn_mask
     
     def forward(
         self,
@@ -198,17 +219,7 @@ class WorldModel(nn.Module):
         z_target: Optional[torch.Tensor] = None,
         prefix_mask: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
-        """
-        训练模式 (Teacher forcing)
-        
-        Args:
-            prefix_tokens: [B, N]
-            z_target: [B, M, latent_dim]
-            prefix_mask: [B, N], 1=valid, 0=padding
-        
-        Returns:
-            z_pred, eos_logits, prefix_hidden
-        """
+        """训练模式 (Teacher forcing)"""
         B, N = prefix_tokens.shape
         device = prefix_tokens.device
         dtype = next(self.parameters()).dtype
@@ -233,23 +244,18 @@ class WorldModel(nn.Module):
         
         # Attention mask
         attn_mask = self._build_attn_mask(N, L, device, h.dtype)
-        
-        # Prefix padding mask
         if prefix_mask is not None:
-            pad_mask = (1.0 - prefix_mask.float()) * torch.finfo(h.dtype).min
-            attn_mask = attn_mask.unsqueeze(0).expand(B, -1, -1).clone()
-            attn_mask[:, :, :N] = attn_mask[:, :, :N] + pad_mask.unsqueeze(1)
+            attn_mask = self._apply_prefix_padding_mask(attn_mask, prefix_mask, N, B)
         
         # Transformer
         for layer in self.layers:
             if self.use_checkpoint and self.training:
-                h, _ = checkpoint(lambda x, m: layer(x, attn_mask=m), h, attn_mask, use_reentrant=False)
+                h = checkpoint(partial(_block_forward, layer), h, attn_mask, use_reentrant=False)
             else:
                 h, _ = layer(h, attn_mask=attn_mask)
         
         h = self.norm(h)
         
-        # Output
         return {
             'z_pred': self.latent_head(h[:, N:]),
             'eos_logits': self.eos_head(h[:, N:]).squeeze(-1),
@@ -281,9 +287,7 @@ class WorldModel(nn.Module):
         # Prefill mask
         prefill_mask = self._build_attn_mask(N, 1, device, dtype)
         if prefix_mask is not None:
-            pad_mask = (1.0 - prefix_mask.float()) * torch.finfo(dtype).min
-            prefill_mask = prefill_mask.unsqueeze(0).expand(B, -1, -1).clone()
-            prefill_mask[:, :, :N] = prefill_mask[:, :, :N] + pad_mask.unsqueeze(1)
+            prefill_mask = self._apply_prefix_padding_mask(prefill_mask, prefix_mask, N, B)
         
         # Prefill forward
         past_kvs = [None] * self.num_layers
@@ -314,7 +318,11 @@ class WorldModel(nn.Module):
             h_next = self.latent_proj(z_next) + self.type_embed.weight[1]
             for i, layer in enumerate(self.layers):
                 h_next, past_kvs[i] = layer(
-                    h_next, past_kv=past_kvs[i], use_cache=True, position_offset=N + 1 + step
+                    h_next,
+                    attn_mask=None,  # KV cache 模式无需 mask
+                    past_kv=past_kvs[i],
+                    use_cache=True,
+                    position_offset=N + 1 + step,
                 )
             h_last = self.norm(h_next)
         

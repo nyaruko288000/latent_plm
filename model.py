@@ -110,42 +110,57 @@ class LatentPlanLM(nn.Module):
     ) -> Dict[str, torch.Tensor]:
         B = prefix_tokens.shape[0]
         target_tokens = self._pad_to_chunk(target_tokens)
-        
-        # 编码目标
+    
+        # 编码目标（frozen AE）
         with torch.no_grad():
             z_target = self.autoencoder.encode_sequence(target_tokens)
-        
-        # World Model
+    
+        # World Model forward
         wm_out = self.world_model(prefix_tokens, z_target, prefix_mask)
         z_pred = wm_out['z_pred']
         eos_logits = wm_out['eos_logits']
         prefix_hidden = wm_out['prefix_hidden']
-        
+    
         # World Model Loss
         M = z_target.shape[1]
         eos_vector = self.world_model.eos_vector.unsqueeze(0).unsqueeze(0).expand(B, 1, -1)
         z_target_eos = torch.cat([z_target, eos_vector], dim=1)
-        
+    
         loss_wm_z = F.mse_loss(z_pred, z_target_eos)
+    
         eos_labels = torch.zeros(B, M + 1, device=z_target.device)
         eos_labels[:, -1] = 1.0
         loss_wm_eos = F.binary_cross_entropy_with_logits(eos_logits, eos_labels)
+    
         loss_wm = loss_wm_z + self.config.eos_loss_weight * loss_wm_eos
-        
-        # Decoder
+    
+        # Decoder forward
         z_noisy = z_target + torch.randn_like(z_target) * noise_scale
         ctx_kvs = self.decoder.precompute_context_kv(prefix_hidden)
-        logits = self.decoder(z_noisy, context_mask=prefix_mask, context_kvs=ctx_kvs)
-        loss_decoder = F.cross_entropy(logits.view(-1, self.config.vocab_size), target_tokens.view(-1))
-        
+        logits = self.decoder(
+            z_plan=z_noisy,
+            z_context=None,
+            context_mask=prefix_mask,
+            context_kvs=ctx_kvs,
+        )
+    
+        loss_decoder = F.cross_entropy(
+            logits.view(-1, self.config.vocab_size),
+            target_tokens.view(-1),
+        )
+    
+        # Total loss
         loss = loss_wm + loss_decoder
-        
+    
+        # Metrics
         with torch.no_grad():
             accuracy = (logits.argmax(-1) == target_tokens).float().mean()
-        
+    
         return {
             'loss': loss,
             'loss_wm': loss_wm,
+            'loss_wm_z': loss_wm_z,
+            'loss_wm_eos': loss_wm_eos,
             'loss_decoder': loss_decoder,
             'accuracy': accuracy,
         }
@@ -188,12 +203,22 @@ class LatentPlanLM(nn.Module):
         return torch.cat([tokens, pad], dim=1)
     
     def _truncate_at_eos(self, z, eos_probs, threshold):
+        """在第一个 EOS 处截断"""
+        B, M = eos_probs.shape
+        device = z.device
+    
         is_eos = eos_probs > threshold
-        if is_eos.any():
-            first_eos = is_eos.long().argmax(dim=1)
-            max_len = int((first_eos + 1).max().item())
-            z = z[:, :max_len]
-        return z
+        has_eos = is_eos.any(dim=1)
+    
+        # 有 EOS 取第一个位置，没有则取 M（全保留）
+        first_eos = torch.where(
+            has_eos,
+            is_eos.long().argmax(dim=1),
+            torch.full((B,), M, device=device, dtype=torch.long)
+        )
+     # 至少保留 1 个 chunk
+        max_len = int(torch.clamp(first_eos, min=1).max().item())
+        return z[:, :max_len]
     
     def freeze_autoencoder(self):
         for p in self.autoencoder.parameters():
