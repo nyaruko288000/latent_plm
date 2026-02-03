@@ -21,19 +21,23 @@ def get_config_3k():
         chunk_size=8,
         latent_dim=256,
         embed_dim=384,
+        
+        # AE
         ae_hidden_dim=256,
         ae_num_layers=2,
         ae_num_heads=4,
-        encoder_hidden_dim=384,
-        encoder_num_layers=6,
-        encoder_num_heads=6,
-        planner_hidden_dim=256,
-        planner_num_layers=4,
-        planner_num_heads=4,
+        
+        # World Model (8层)
+        wm_hidden_dim=384,
+        wm_num_layers=8,
+        wm_num_heads=6,
+        
+        # Decoder
         decoder_hidden_dim=384,
         decoder_num_layers=4,
         decoder_num_heads=6,
         num_iterations=3,
+        
         dropout=0.1,
         use_checkpoint=True,
         share_embed=True,
@@ -47,23 +51,22 @@ def get_tiny_config():
         chunk_size=8,
         latent_dim=128,
         embed_dim=256,
+        
         ae_hidden_dim=192,
         ae_num_layers=1,
         ae_num_heads=4,
-        encoder_hidden_dim=256,
-        encoder_num_layers=2,
-        encoder_num_heads=4,
-        planner_hidden_dim=192,
-        planner_num_layers=2,
-        planner_num_heads=4,
+        
+        wm_hidden_dim=256,
+        wm_num_layers=4,
+        wm_num_heads=4,
+        
         decoder_hidden_dim=256,
         decoder_num_layers=2,
         decoder_num_heads=4,
         num_iterations=2,
+        
         dropout=0.1,
         use_checkpoint=False,
-        share_embed=True,
-        tie_output=True,
     )
 
 
@@ -113,7 +116,7 @@ class Trainer:
                         train_loss=metrics["loss"],
                         train_acc=metrics["accuracy"],
                         lr=lr,
-                        loss_planner=metrics.get("loss_planner"),
+                        loss_wm=metrics.get("loss_wm"),
                         loss_decoder=metrics.get("loss_decoder"),
                         epoch=epoch,
                         total_epochs=self.config["num_epochs"]
