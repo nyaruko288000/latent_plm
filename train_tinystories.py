@@ -337,6 +337,7 @@ def main():
             lr=1e-3,
             device=device,
             use_amp=train_config["use_amp"],
+            save_dir=args.save_dir,
         )
         
         # 保存 AE

@@ -246,5 +246,10 @@ def train_autoencoder(
         avg_loss = total_loss / len(dataloader)
         avg_acc = total_acc / len(dataloader)
         print(f"AE Epoch {epoch+1}/{num_epochs} | Loss: {avg_loss:.4f} | Acc: {avg_acc:.4f}")
+        
+        torch.save(
+            autoencoder.state_dict(),
+            f"{save_dir}/autoencoder_epoch{epoch+1}.pt"
+        )
     
     return autoencoder
