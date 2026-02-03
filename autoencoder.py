@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from typing import Optional, Tuple, Dict
 from torch.utils.checkpoint import checkpoint
 
-from .components import RMSNorm, Attention, MLP
+from components import RMSNorm, Attention, MLP
 
 
 class AutoencoderBlock(nn.Module):

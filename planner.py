@@ -5,7 +5,7 @@ from typing import Optional, Tuple, List, Dict
 from functools import partial
 from torch.utils.checkpoint import checkpoint
 
-from .components import RMSNorm, RotaryEmbedding, Attention, CrossAttention, SwiGLU
+from components import RMSNorm, RotaryEmbedding, Attention, CrossAttention, SwiGLU
 
 
 class PlannerBlock(nn.Module):

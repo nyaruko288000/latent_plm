@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from typing import Optional, Tuple
 from torch.utils.checkpoint import checkpoint
 
-from .components import RMSNorm, RotaryEmbedding, Attention, SwiGLU
+from components import RMSNorm, RotaryEmbedding, Attention, SwiGLU
 
 
 class EncoderBlock(nn.Module):

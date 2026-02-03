@@ -4,10 +4,10 @@ import torch.nn.functional as F
 from typing import Optional, Dict, Tuple, List
 from dataclasses import dataclass
 
-from .autoencoder import TokenChunkAutoencoder
-from .encoder import ContextEncoder
-from .planner import LatentARPlanner
-from .decoder import IterativeNARDecoder
+from autoencoder import TokenChunkAutoencoder
+from encoder import ContextEncoder
+from planner import LatentARPlanner
+from decoder import IterativeNARDecoder
 
 
 @dataclass

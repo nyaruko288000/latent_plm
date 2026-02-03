@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""
-TinyStories 训练脚本
-- 3K 字节回退词表
-- 共享 embedding
-- Cloudflare 隧道监控
-"""
+"""TinyStories 训练脚本 - 支持 AE 单独保存/加载"""
 
 import os
 import argparse
@@ -21,30 +16,24 @@ from monitor import MetricsLogger, start_monitor
 
 
 def get_config_3k():
-    """3K 词表优化配置"""
     return LatentPlanLMConfig(
         vocab_size=3000,
         chunk_size=8,
         latent_dim=256,
         embed_dim=384,
-        
         ae_hidden_dim=256,
         ae_num_layers=2,
         ae_num_heads=4,
-        
         encoder_hidden_dim=384,
         encoder_num_layers=6,
         encoder_num_heads=6,
-        
         planner_hidden_dim=256,
         planner_num_layers=4,
         planner_num_heads=4,
-        
         decoder_hidden_dim=384,
         decoder_num_layers=4,
         decoder_num_heads=6,
         num_iterations=3,
-        
         dropout=0.1,
         use_checkpoint=True,
         share_embed=True,
@@ -53,30 +42,24 @@ def get_config_3k():
 
 
 def get_tiny_config():
-    """快速测试配置"""
     return LatentPlanLMConfig(
         vocab_size=3000,
-        chunk_size=4,
+        chunk_size=8,
         latent_dim=128,
         embed_dim=256,
-        
         ae_hidden_dim=192,
         ae_num_layers=1,
         ae_num_heads=4,
-        
         encoder_hidden_dim=256,
         encoder_num_layers=2,
         encoder_num_heads=4,
-        
         planner_hidden_dim=192,
         planner_num_layers=2,
         planner_num_heads=4,
-        
         decoder_hidden_dim=256,
         decoder_num_layers=2,
         decoder_num_heads=4,
         num_iterations=2,
-        
         dropout=0.1,
         use_checkpoint=False,
         share_embed=True,
@@ -94,7 +77,12 @@ class Trainer:
         self.config = config
         self.device = device
         
-        self.optimizer = torch.optim.AdamW(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"], betas=(0.9, 0.95))
+        self.optimizer = torch.optim.AdamW(
+            model.parameters(), 
+            lr=config["lr"], 
+            weight_decay=config["weight_decay"], 
+            betas=(0.9, 0.95)
+        )
         
         for pg in self.optimizer.param_groups:
             pg["initial_lr"] = pg["lr"]
@@ -120,13 +108,28 @@ class Trainer:
                 
                 if self.global_step % self.config["log_interval"] == 0:
                     lr = self.optimizer.param_groups[0]["lr"]
-                    self.logger.log(step=self.global_step, train_loss=metrics["loss"], train_acc=metrics["accuracy"], lr=lr, loss_planner=metrics.get("loss_planner"), loss_decoder=metrics.get("loss_decoder"), epoch=epoch, total_epochs=self.config["num_epochs"])
-                    print(f"Step {self.global_step:>6} | Loss: {metrics['loss']:.4f} | Acc: {metrics['accuracy']:.3f} | LR: {lr:.2e}")
+                    self.logger.log(
+                        step=self.global_step,
+                        train_loss=metrics["loss"],
+                        train_acc=metrics["accuracy"],
+                        lr=lr,
+                        loss_planner=metrics.get("loss_planner"),
+                        loss_decoder=metrics.get("loss_decoder"),
+                        epoch=epoch,
+                        total_epochs=self.config["num_epochs"]
+                    )
+                    print(f"Step {self.global_step:>6} | Loss: {metrics['loss']:.4f} | "
+                          f"Acc: {metrics['accuracy']:.3f} | LR: {lr:.2e}")
                 
                 if self.global_step % self.config["eval_interval"] == 0 and self.global_step > 0:
                     val_metrics = self.validate()
-                    self.logger.log(step=self.global_step, val_loss=val_metrics["loss"], val_acc=val_metrics["accuracy"])
-                    print(f"         Val Loss: {val_metrics['loss']:.4f} | Val Acc: {val_metrics['accuracy']:.3f}")
+                    self.logger.log(
+                        step=self.global_step,
+                        val_loss=val_metrics["loss"],
+                        val_acc=val_metrics["accuracy"]
+                    )
+                    print(f"         Val Loss: {val_metrics['loss']:.4f} | "
+                          f"Val Acc: {val_metrics['accuracy']:.3f}")
                     
                     if val_metrics["loss"] < self.best_val_loss:
                         self.best_val_loss = val_metrics["loss"]
@@ -201,7 +204,13 @@ class Trainer:
     def save_checkpoint(self, filename):
         save_dir = Path(self.config.get("save_dir", "checkpoints"))
         save_dir.mkdir(exist_ok=True)
-        torch.save({"model": self.model.state_dict(), "optimizer": self.optimizer.state_dict(), "scaler": self.scaler.state_dict() if self.scaler else None, "global_step": self.global_step, "best_val_loss": self.best_val_loss}, save_dir / filename)
+        torch.save({
+            "model": self.model.state_dict(),
+            "optimizer": self.optimizer.state_dict(),
+            "scaler": self.scaler.state_dict() if self.scaler else None,
+            "global_step": self.global_step,
+            "best_val_loss": self.best_val_loss
+        }, save_dir / filename)
 
 
 def main():
@@ -224,12 +233,18 @@ def main():
     parser.add_argument("--no_tunnel", action="store_true")
     parser.add_argument("--skip_ae_pretrain", action="store_true")
     parser.add_argument("--skip_tokenizer", action="store_true")
-    parser.add_argument("--ae_epochs", type=int, default=2)
+    parser.add_argument("--ae_epochs", type=int, default=20)
+    parser.add_argument("--ae_batch_size", type=int, default=512)
+    parser.add_argument("--ae_samples", type=int, default=200000)
+    parser.add_argument("--ae_checkpoint", type=str, default=None)
     parser.add_argument("--resume", type=str, default=None)
     args = parser.parse_args()
     
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"🖥️  Device: {device}")
+    
+    # 创建目录
+    Path(args.save_dir).mkdir(exist_ok=True)
     
     # 监控
     print("\n📊 Starting monitor...")
@@ -241,7 +256,7 @@ def main():
     if not args.skip_tokenizer and not Path(args.tokenizer_path).exists():
         print("\n🔤 Building tokenizer...")
         from build_tokenizer import build_byte_level_bpe
-        build_byte_level_bpe(vocab_size=3000, save_path=args.tokenizer_path)
+        build_byte_level_bpe(vocab_size=3000, save_path=args.tokenizer_path, max_samples=50000)
     
     # 配置
     if args.config == "3k":
@@ -249,11 +264,31 @@ def main():
     else:
         model_config = get_tiny_config()
     
-    train_config = {"lr": args.lr, "weight_decay": 0.01, "num_epochs": args.num_epochs, "warmup_steps": args.warmup_steps, "grad_clip": args.grad_clip, "log_interval": args.log_interval, "eval_interval": args.eval_interval, "save_interval": args.save_interval, "save_dir": args.save_dir, "use_amp": device == "cuda"}
+    train_config = {
+        "lr": args.lr,
+        "weight_decay": 0.01,
+        "num_epochs": args.num_epochs,
+        "warmup_steps": args.warmup_steps,
+        "grad_clip": args.grad_clip,
+        "log_interval": args.log_interval,
+        "eval_interval": args.eval_interval,
+        "save_interval": args.save_interval,
+        "save_dir": args.save_dir,
+        "use_amp": device == "cuda"
+    }
     
     # 数据
     print("\n📚 Loading data...")
-    train_loader, val_loader, tokenizer = get_dataloaders(batch_size=args.batch_size, max_prefix_len=256, max_target_len=256, chunk_size=model_config.chunk_size, num_workers=2, max_train_samples=args.max_train_samples, max_val_samples=args.max_val_samples, tokenizer_path=args.tokenizer_path)
+    train_loader, val_loader, tokenizer = get_dataloaders(
+        batch_size=args.batch_size,
+        max_prefix_len=256,
+        max_target_len=256,
+        chunk_size=model_config.chunk_size,
+        num_workers=2,
+        max_train_samples=args.max_train_samples,
+        max_val_samples=args.max_val_samples,
+        tokenizer_path=args.tokenizer_path,
+    )
     
     model_config.vocab_size = tokenizer.vocab_size
     
@@ -269,15 +304,46 @@ def main():
     print(f"   Planner: {params['planner']:,}")
     print(f"   Decoder: {params['decoder']:,}")
     
-    # AE 预训练
-    if not args.skip_ae_pretrain and args.resume is None:
+    # AE 处理
+    if args.ae_checkpoint and Path(args.ae_checkpoint).exists():
+        # 加载预训练 AE
+        print(f"\n📂 Loading pretrained AE from {args.ae_checkpoint}")
+        model.autoencoder.load_state_dict(
+            torch.load(args.ae_checkpoint, map_location=device)
+        )
+        model.freeze_autoencoder()
+        print("✓ Loaded and frozen")
+        
+    elif not args.skip_ae_pretrain and args.resume is None:
+        # 训练新 AE
         print("\n🔧 Phase 1: Pretraining Autoencoder...")
         logger.set_status("ae_pretrain")
-        ae_loader, _ = get_ae_dataloader(batch_size=64, chunk_size=model_config.chunk_size, num_workers=2, max_samples=50000, tokenizer_path=args.tokenizer_path)
-        train_autoencoder(model.autoencoder, ae_loader, num_epochs=args.ae_epochs, lr=1e-3, device=device, use_amp=train_config["use_amp"])
+        
+        ae_loader, _ = get_ae_dataloader(
+            batch_size=args.ae_batch_size,
+            chunk_size=model_config.chunk_size,
+            num_workers=2,
+            max_samples=args.ae_samples,
+            tokenizer_path=args.tokenizer_path,
+        )
+        
+        train_autoencoder(
+            model.autoencoder,
+            ae_loader,
+            num_epochs=args.ae_epochs,
+            lr=1e-3,
+            device=device,
+            use_amp=train_config["use_amp"],
+        )
+        
+        # 保存 AE
+        ae_path = f"{args.save_dir}/autoencoder.pt"
+        torch.save(model.autoencoder.state_dict(), ae_path)
+        print(f"✓ Autoencoder saved to {ae_path}")
+        
         model.freeze_autoencoder()
     
-    # 恢复
+    # 恢复完整模型
     if args.resume:
         print(f"\n📂 Resuming from {args.resume}")
         ckpt = torch.load(args.resume, map_location=device)
@@ -287,7 +353,15 @@ def main():
     print("\n🚀 Phase 2: Training Full Model...")
     logger.set_status("training")
     
-    trainer = Trainer(model=model, train_loader=train_loader, val_loader=val_loader, tokenizer=tokenizer, logger=logger, config=train_config, device=device)
+    trainer = Trainer(
+        model=model,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        tokenizer=tokenizer,
+        logger=logger,
+        config=train_config,
+        device=device
+    )
     
     if args.resume and "optimizer" in ckpt:
         trainer.global_step = ckpt.get("global_step", 0)
