@@ -196,31 +196,32 @@ def train_autoencoder(
     device: str = 'cuda',
     use_amp: bool = True,
     save_dir: str = "checkpoints",
+    resume_epoch: int = 0,
 ) -> nn.Module:
     """
     阶段1：预训练 Autoencoder
-    
-    Args:
-        autoencoder: TokenChunkAutoencoder 实例
-        dataloader: 数据加载器，每个 batch 需要有 'tokens' 键
-        num_epochs: 训练轮数
-        lr: 学习率
-        device: 设备
-        use_amp: 是否使用混合精度
-    
-    Returns:
-        训练后的 autoencoder
+    支持从指定 epoch 恢复
     """
+    from pathlib import Path
+    Path(save_dir).mkdir(exist_ok=True)
+    
     autoencoder = autoencoder.to(device)
-    autoencoder.train()  # ✅ 修复：确保在训练模式
+    
+    # 加载 checkpoint
+    if resume_epoch > 0:
+        ckpt_path = f"{save_dir}/autoencoder_epoch{resume_epoch}.pt"
+        autoencoder.load_state_dict(torch.load(ckpt_path, map_location=device))
+        print(f"✓ Resumed AE from epoch {resume_epoch}")
+    
+    autoencoder.train()
     
     optimizer = AdamW(autoencoder.parameters(), lr=lr)
     scaler = GradScaler() if use_amp and device == 'cuda' else None
     
-    for epoch in range(num_epochs):
+    for epoch in range(resume_epoch, num_epochs):
         total_loss = 0
         total_acc = 0
-        autoencoder.train()  # ✅ 每个 epoch 开始确保训练模式
+        autoencoder.train()
         
         for batch in dataloader:
             tokens = batch['tokens'].to(device)
@@ -248,6 +249,7 @@ def train_autoencoder(
         avg_acc = total_acc / len(dataloader)
         print(f"AE Epoch {epoch+1}/{num_epochs} | Loss: {avg_loss:.4f} | Acc: {avg_acc:.4f}")
         
+        # 保存
         torch.save(
             autoencoder.state_dict(),
             f"{save_dir}/autoencoder_epoch{epoch+1}.pt"

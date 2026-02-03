@@ -241,6 +241,7 @@ def main():
     parser.add_argument("--ae_samples", type=int, default=200000)
     parser.add_argument("--ae_checkpoint", type=str, default=None)
     parser.add_argument("--resume", type=str, default=None)
+    parser.add_argument("--ae_resume_epoch", type=int, default=0)
     args = parser.parse_args()
     
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -337,6 +338,7 @@ def main():
             device=device,
             use_amp=train_config["use_amp"],
             save_dir=args.save_dir,
+            resume_epoch=args.ae_resume_epoch,
         )
         
         # 保存 AE
