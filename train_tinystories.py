@@ -303,8 +303,7 @@ def main():
     print(f"   Total parameters: {params['total']:,}")
     print(f"   Shared embedding: {params['shared_embed']:,}")
     print(f"   Autoencoder: {params['autoencoder']:,}")
-    print(f"   Encoder: {params['encoder']:,}")
-    print(f"   Planner: {params['planner']:,}")
+    print(f"   World Model: {params['world_model']:,}")
     print(f"   Decoder: {params['decoder']:,}")
     
     # AE 处理
