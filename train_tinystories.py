@@ -123,6 +123,7 @@ class Trainer:
                     )
                     print(f"Step {self.global_step:>6} | Loss: {metrics['loss']:.4f} | "
                           f"Acc: {metrics['accuracy']:.3f} | LR: {lr:.2e}")
+                    print(f"Step {step} | WM: {metrics['loss_wm']:.3f} | Dec: {metrics['loss_decoder']:.3f}")
                 
                 if self.global_step % self.config["eval_interval"] == 0 and self.global_step > 0:
                     val_metrics = self.validate()
@@ -143,7 +144,6 @@ class Trainer:
                     self.save_checkpoint(f"checkpoint_{self.global_step}.pt")
                 
                 self.global_step += 1
-                print(f"global_step now: {self.global_step}")  # ← 加这行
             
             print(f"\n{'='*50}")
             print(f"Epoch {epoch + 1}/{self.config['num_epochs']} completed in {time.time() - epoch_start:.1f}s")
@@ -152,30 +152,24 @@ class Trainer:
         self.logger.set_status("completed")
     
     def train_step(self, batch):
-        print("1. Loading batch to device...")
         prefix = batch["prefix"].to(self.device)
         target = batch["target"].to(self.device)
         prefix_mask = batch.get("prefix_mask")
         if prefix_mask is not None:
             prefix_mask = prefix_mask.to(self.device)
     
-        print("2. Warmup LR...")
         if self.global_step < self.config["warmup_steps"]:
             lr_scale = (self.global_step + 1) / self.config["warmup_steps"]
             for pg in self.optimizer.param_groups:
                 pg["lr"] = pg["initial_lr"] * lr_scale
     
-        print("3. Zero grad...")
         self.optimizer.zero_grad()
     
-        print("4. Forward pass...")
         if self.scaler:
             with autocast(dtype=torch.bfloat16):
                 outputs = self.model(prefix, target, prefix_mask=prefix_mask)
                 loss = outputs["loss"]
-            print("5. Backward...")
             self.scaler.scale(loss).backward()
-            print("6. Optimizer step...")
             self.scaler.unscale_(self.optimizer)
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config["grad_clip"])
             self.scaler.step(self.optimizer)
@@ -187,7 +181,6 @@ class Trainer:
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config["grad_clip"])
             self.optimizer.step()
     
-        print("7. Done!")
         return {k: v.item() if torch.is_tensor(v) else v for k, v in outputs.items()}
     
     @torch.no_grad()
