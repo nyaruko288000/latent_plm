@@ -143,6 +143,7 @@ class Trainer:
                     self.save_checkpoint(f"checkpoint_{self.global_step}.pt")
                 
                 self.global_step += 1
+                print(f"global_step now: {self.global_step}")  # ← 加这行
             
             print(f"\n{'='*50}")
             print(f"Epoch {epoch + 1}/{self.config['num_epochs']} completed in {time.time() - epoch_start:.1f}s")
