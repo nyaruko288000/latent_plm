@@ -195,6 +195,7 @@ def train_autoencoder(
     lr: float = 1e-4,
     device: str = 'cuda',
     use_amp: bool = True,
+    save_dir: str = "checkpoints",
 ) -> nn.Module:
     """
     阶段1：预训练 Autoencoder
